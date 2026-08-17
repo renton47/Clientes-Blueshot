@@ -15,9 +15,13 @@ export async function POST(request: NextRequest) {
       .eq('active', true)
       .single();
 
+    if (error || !installation) {
+      return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
+    }
+
     const client = Array.isArray(installation.clients) ? installation.clients[0] : installation.clients;
 
-    if (error || !installation || !client?.active) {
+    if (!client?.active) {
       return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
     }
 
