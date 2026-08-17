@@ -251,8 +251,6 @@ export interface Database {
         }
         Update: Partial<Database['public']['Tables']['resources']['Insert']>
       }
-    }
-    
       wordpress_installations: {
         Row: {
           id: string
@@ -286,6 +284,7 @@ export interface Database {
     }
   }
 }
+
 
 // Tipos de conveniencia
 export type Client = Database['public']['Tables']['clients']['Row']

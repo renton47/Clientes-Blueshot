@@ -15,7 +15,9 @@ export async function POST(request: NextRequest) {
       .eq('active', true)
       .single();
 
-    if (error || !installation || !installation.clients?.active) {
+    const client = Array.isArray(installation.clients) ? installation.clients[0] : installation.clients;
+
+    if (error || !installation || !client?.active) {
       return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
     }
 
@@ -43,7 +45,7 @@ Responde ÚNICAMENTE en JSON con la siguiente estructura:
 
     const userPrompt = JSON.stringify(product, null, 2);
 
-    const response = await provider.generateText({
+    const response = await provider.complete({
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
@@ -51,11 +53,11 @@ Responde ÚNICAMENTE en JSON con la siguiente estructura:
     });
 
     try {
-      const jsonStr = response.text.replace(/^\s*```json\s*/, '').replace(/\s*```\s*$/, '');
+      const jsonStr = response.content.replace(/^\s*```json\s*/, '').replace(/\s*```\s*$/, '');
       const parsed = JSON.parse(jsonStr);
       return NextResponse.json({ success: true, data: parsed });
     } catch (parseError) {
-      console.error('Failed to parse AI response:', response.text);
+      console.error('Failed to parse AI response:', response.content);
       return NextResponse.json({ success: false, error: 'Invalid AI response' }, { status: 500 });
     }
   } catch (error) {

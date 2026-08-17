@@ -17,15 +17,17 @@ export async function POST(request: NextRequest) {
       .eq('active', true)
       .single();
 
-    if (error || !installation || !installation.clients?.active) {
+    const client = Array.isArray(installation.clients) ? installation.clients[0] : installation.clients;
+
+    if (error || !installation || !client?.active) {
       return NextResponse.json({ success: false, error: 'Invalid or inactive token' }, { status: 401 });
     }
 
     return NextResponse.json({
       success: true,
       client: {
-        name: installation.clients.name,
-        company_name: installation.clients.company_name
+        name: client.name,
+        company_name: client.company_name
       }
     });
   } catch (error) {
