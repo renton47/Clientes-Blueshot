@@ -22,7 +22,7 @@ function createOpenAIClient(): OpenAI {
 
 export function createOpenAIProvider(): AIProvider {
   const client = createOpenAIClient()
-  const defaultModel = process.env.OPENAI_MODEL ?? 'gpt-4o'
+  const defaultModel = process.env.OPENAI_MODEL ?? 'gpt-5.2'
 
   return {
     name: 'openai',
@@ -32,7 +32,7 @@ export function createOpenAIProvider(): AIProvider {
         model: options.model ?? defaultModel,
         messages: options.messages,
         temperature: options.temperature ?? 0.7,
-        max_tokens: options.maxTokens ?? 4096,
+        max_completion_tokens: options.maxTokens ?? 4096,
         stream: false,
       })
 
@@ -55,7 +55,7 @@ export function createOpenAIProvider(): AIProvider {
         model: options.model ?? defaultModel,
         messages: options.messages,
         temperature: options.temperature ?? 0.7,
-        max_tokens: options.maxTokens ?? 4096,
+        max_completion_tokens: options.maxTokens ?? 4096,
         stream: true,
       })
 
