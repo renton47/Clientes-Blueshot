@@ -31,7 +31,7 @@ export function createOpenAIProvider(): AIProvider {
       const response = await client.chat.completions.create({
         model: options.model ?? defaultModel,
         messages: options.messages,
-        temperature: options.temperature ?? 0.7,
+        temperature: 1,
         max_completion_tokens: options.maxTokens ?? 4096,
         stream: false,
       })
@@ -54,7 +54,7 @@ export function createOpenAIProvider(): AIProvider {
       const stream = await client.chat.completions.create({
         model: options.model ?? defaultModel,
         messages: options.messages,
-        temperature: options.temperature ?? 0.7,
+        temperature: 1,
         max_completion_tokens: options.maxTokens ?? 4096,
         stream: true,
       })
