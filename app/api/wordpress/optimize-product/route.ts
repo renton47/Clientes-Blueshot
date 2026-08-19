@@ -7,6 +7,9 @@ export async function POST(request: NextRequest) {
   try {
     const authHeader = request.headers.get('authorization');
     const token = authHeader?.replace('Bearer ', '');
+    if (!token) {
+      return NextResponse.json({ success: false, error: 'Missing token' }, { status: 401 });
+    }
     const supabase = createServiceClient();
 
     const { data: installation, error } = await supabase
@@ -72,7 +75,7 @@ Responde ÚNICAMENTE en JSON con la siguiente estructura:
       }
       const parsed = JSON.parse(jsonStr);
       return NextResponse.json({ success: true, data: parsed });
-    } catch (parseError) {
+    } catch (error) {
       console.error('Failed to parse AI response:', response.content);
       return NextResponse.json({ success: false, error: 'Invalid AI response' }, { status: 500 });
     }
