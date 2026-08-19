@@ -65,7 +65,11 @@ Responde ÚNICAMENTE en JSON con la siguiente estructura:
     });
 
     try {
-      const jsonStr = response.content.replace(/^\s*```json\s*/, '').replace(/\s*```\s*$/, '');
+      let jsonStr = response.content;
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[0];
+      }
       const parsed = JSON.parse(jsonStr);
       return NextResponse.json({ success: true, data: parsed });
     } catch (parseError) {
