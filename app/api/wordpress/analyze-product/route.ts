@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { getAIProvider } from '@/lib/ai/provider';
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {

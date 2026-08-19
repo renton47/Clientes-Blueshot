@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { getAIProvider } from '@/lib/ai/provider';
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { product } = body;
+    const { product, seo_context } = body;
     if (!product) {
       return NextResponse.json({ success: false, error: 'Product data required' }, { status: 400 });
     }
@@ -34,6 +35,7 @@ export async function POST(request: NextRequest) {
     const tone = client.tone_of_voice || 'Profesional';
 
     const provider = getAIProvider();
+    const seoProvider = seo_context?.provider || 'none';
     const systemPrompt = `Eres un experto en Copywriting y SEO para WooCommerce. Tono: ${tone}.
 Genera contenido optimizado para el producto.
 Responde ÚNICAMENTE en JSON con la siguiente estructura:
@@ -41,15 +43,19 @@ Responde ÚNICAMENTE en JSON con la siguiente estructura:
   "title": "Nuevo Título SEO",
   "short_description": "Descripción corta de max 160 chars.",
   "description": "Descripción HTML larga...",
-  "meta_title": "Meta title SEO",
-  "meta_description": "Meta desc",
   "slug": "slug-optimizado",
-  "primary_keyword": "keyword",
-  "secondary_keywords": ["k1", "k2"],
+  "seo": {
+    "provider": "${seoProvider}",
+    "seo_title": "Meta title SEO",
+    "meta_description": "Meta desc",
+    "focus_keyword": "keyword",
+    "secondary_keywords": ["k1", "k2"],
+    "canonical": ""
+  },
   "faq": [{"question": "Q?", "answer": "A"}]
 }`;
 
-    const userPrompt = JSON.stringify(product, null, 2);
+    const userPrompt = JSON.stringify({ product, seo_context }, null, 2);
 
     const response = await provider.complete({
       messages: [
