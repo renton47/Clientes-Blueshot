@@ -9,6 +9,13 @@ interface ValidationResult {
   errorsByField: Record<string, string[]>;
 }
 
+const POWER_WORDS = [
+  "mejor", "increíble", "garantizado", "oferta", "exclusivo", "único", "secreto",
+  "definitivo", "esencial", "probado", "premium", "barato", "económico",
+  "gratis", "nuevo", "original", "potente", "profesional", "rápido", "fácil",
+  "completo", "seguro", "perfecto", "descubre", "poderoso"
+];
+
 // Validación Determinística del Código (NO DELEGAR SOLO AL LLM)
 function validateSEO(parsed: any, seoProvider: string): ValidationResult {
   const result: ValidationResult = {
@@ -57,6 +64,16 @@ function validateSEO(parsed: any, seoProvider: string): ValidationResult {
     if (seoTitle.length > 60) {
       addError('seo', `El SEO Title es muy largo (${seoTitle.length} chars). Máximo ideal es 60.`);
     }
+    if (seoProvider === 'rank_math') {
+      const hasPowerWord = POWER_WORDS.some(pw => seoTitle.includes(pw));
+      if (!hasPowerWord) {
+        addError('seo', 'Para Rank Math, el SEO Title DEBE incluir al menos una Power Word (ej. "Mejor", "Increíble", "Exclusivo", "Perfecto", etc.) de forma natural.');
+      }
+      const hasNumber = /\d/.test(seoTitle);
+      if (!hasNumber) {
+        addError('seo', 'Para Rank Math, el SEO Title DEBE incluir un número (ej. "7 razones", "2024", etc.) de forma natural.');
+      }
+    }
   }
 
   // 3. Meta Description
@@ -74,6 +91,11 @@ function validateSEO(parsed: any, seoProvider: string): ValidationResult {
   // 4. Slug
   if (!slug) {
     addError('slug', 'El slug no puede estar vacío.');
+  } else if (kw) {
+    const kwSlug = kw.replace(/\s+/g, '-');
+    if (!slug.includes(kwSlug) && !slug.includes(kw.split(' ')[0])) {
+      addError('slug', `El slug DEBE contener la Focus Keyword o parte de ella ("${kwSlug}").`);
+    }
   }
 
   // 5. Short Description
@@ -226,7 +248,7 @@ Responde ÚNICAMENTE en JSON con esta estructura exacta:
     ];
 
     let currentAttempt = 1;
-    const MAX_ATTEMPTS = 3; // 1 Generación + 2 Reparaciones selectivas
+    const MAX_ATTEMPTS = 4; // 1 Generación + 3 Reparaciones selectivas
     let currentParsed: any = {};
     let isFullyValid = false;
     let finalValidationErrors: string[] = [];
