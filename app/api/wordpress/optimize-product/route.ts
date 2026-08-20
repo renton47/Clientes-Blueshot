@@ -3,64 +3,143 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { getAIProvider } from '@/lib/ai/provider';
 export const maxDuration = 300;
 
-function validateSEO(parsed: any, seoProvider: string): string[] {
-  const errors: string[] = [];
-  
-  if (!parsed) return ['El JSON generado está vacío o es inválido.'];
-  
+interface ValidationResult {
+  isValid: boolean;
+  fieldsToRepair: string[];
+  errorsByField: Record<string, string[]>;
+}
+
+// Validación Determinística del Código (NO DELEGAR SOLO AL LLM)
+function validateSEO(parsed: any, seoProvider: string): ValidationResult {
+  const result: ValidationResult = {
+    isValid: true,
+    fieldsToRepair: [],
+    errorsByField: {}
+  };
+
+  const addError = (field: string, error: string) => {
+    if (!result.errorsByField[field]) {
+      result.errorsByField[field] = [];
+      if (!result.fieldsToRepair.includes(field)) {
+        result.fieldsToRepair.push(field);
+      }
+    }
+    result.errorsByField[field].push(error);
+    result.isValid = false;
+  };
+
+  if (!parsed || typeof parsed !== 'object') {
+    addError('general', 'El JSON generado está vacío o es inválido.');
+    return result;
+  }
+
   const seo = parsed.seo || {};
   const kw = (seo.focus_keyword || '').toLowerCase().trim();
-  const title = (seo.seo_title || '').toLowerCase();
+  const title = (parsed.title || '').trim(); // H1
+  const seoTitle = (seo.seo_title || '').toLowerCase().trim();
   const descHtml = (parsed.description || '').toLowerCase();
-  const metaDesc = (seo.meta_description || '').toLowerCase();
-  const slug = (parsed.slug || '').toLowerCase();
+  const shortDesc = (parsed.short_description || '').trim();
+  const metaDesc = (seo.meta_description || '').toLowerCase().trim();
+  const slug = (parsed.slug || '').toLowerCase().trim();
 
+  // 1. Focus Keyword
   if (!kw) {
-    errors.push('Falta la Focus Keyword en el resultado.');
-  } else {
-    if (!title.includes(kw)) {
-      errors.push(`El SEO Title DEBE contener exactamente la Focus Keyword ("${kw}").`);
+    addError('seo', 'Falta la Focus Keyword en el campo seo.focus_keyword.');
+  }
+
+  // 2. SEO Title
+  if (!seoTitle) {
+    addError('seo', 'Falta el SEO Title (seo.seo_title).');
+  } else if (kw) {
+    if (!seoTitle.includes(kw)) {
+      addError('seo', `El SEO Title DEBE contener exactamente la Focus Keyword ("${kw}").`);
     }
-    
+    if (seoTitle.length > 60) {
+      addError('seo', `El SEO Title es muy largo (${seoTitle.length} chars). Máximo ideal es 60.`);
+    }
+  }
+
+  // 3. Meta Description
+  if (!metaDesc) {
+    addError('seo', 'Falta la Meta Description (seo.meta_description).');
+  } else if (kw) {
     if (!metaDesc.includes(kw)) {
-      errors.push(`La Meta Description DEBE contener la Focus Keyword ("${kw}").`);
+      addError('seo', `La Meta Description DEBE contener la Focus Keyword ("${kw}").`);
     }
-    
+    if (metaDesc.length > 160) {
+      addError('seo', `La Meta Description es muy larga (${metaDesc.length} chars). Máximo ideal es 160.`);
+    }
+  }
+
+  // 4. Slug
+  if (!slug) {
+    addError('slug', 'El slug no puede estar vacío.');
+  }
+
+  // 5. Short Description
+  if (!shortDesc) {
+    addError('short_description', 'La descripción corta no puede estar vacía.');
+  }
+
+  // 6. Keywords Secundarias
+  if (!seo.secondary_keywords || !Array.isArray(seo.secondary_keywords) || seo.secondary_keywords.length === 0) {
+    addError('seo', 'Faltan las keywords secundarias. Agrega al menos 2 en seo.secondary_keywords.');
+  }
+
+  // 7. Descripción Larga (Validaciones Críticas)
+  if (!descHtml) {
+    addError('description', 'La descripción HTML larga no puede estar vacía.');
+  } else if (kw) {
     const textOnly = descHtml.replace(/<[^>]+>/g, ' ').trim();
     const words = textOnly.split(/\s+/).filter((w: string) => w.length > 0);
     const totalWords = words.length;
-    
-    // Contar ocurrencias aproximadas de la keyword
+
+    // Minimum words 650
+    if (totalWords < 650) {
+      addError('description', `La descripción es demasiado corta (${totalWords} palabras reales). DEBE superar las 650 palabras útiles, sin keyword stuffing.`);
+    }
+
+    // Density 1% - 2.5%
     const kwRegex = new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
     const kwMatches = textOnly.match(kwRegex) || [];
-    const kwWords = kw.split(/\s+/).length;
-    const density = totalWords > 0 ? (kwMatches.length * kwWords) / totalWords : 0;
+    const kwWordsCount = kw.split(/\s+/).length;
+    const density = totalWords > 0 ? (kwMatches.length * kwWordsCount) / totalWords : 0;
     
     if (density > 0.025) {
-      errors.push(`La densidad de la Focus Keyword es demasiado alta (${(density * 100).toFixed(1)}%). DEBE estar por debajo del 2.5% (ideal 1-1.5%). Reduce repeticiones y usa lenguaje natural.`);
+      addError('description', `La densidad de la Focus Keyword es excesiva (${(density * 100).toFixed(1)}%). DEBE ser menor a 2.5% (ideal 1-1.5%). Reduce repeticiones.`);
+    }
+
+    // Keyword en introducción (primeros 15%)
+    const firstPart = textOnly.substring(0, Math.floor(textOnly.length * 0.15));
+    if (!firstPart.includes(kw)) {
+      addError('description', 'La Focus Keyword DEBE aparecer de forma natural en la introducción (primeros párrafos) de la descripción.');
+    }
+
+    // H2 / H3 Presence and Keyword
+    const headerRegex = /<h[23][^>]*>(.*?)<\/h[23]>/g;
+    let headerMatches;
+    let hasHeaders = false;
+    let kwInHeader = false;
+    while ((headerMatches = headerRegex.exec(descHtml)) !== null) {
+      hasHeaders = true;
+      if (headerMatches[1].includes(kw)) {
+        kwInHeader = true;
+      }
+    }
+    
+    if (!hasHeaders) {
+      addError('description', 'Faltan etiquetas H2 o H3. Debes estructurar el texto con encabezados útiles.');
+    } else if (!kwInHeader) {
+      addError('description', 'La Focus Keyword DEBE aparecer en al menos un encabezado H2 o H3 de forma natural.');
+    }
+
+    // FAQ Acordeón Funcional
+    if (!descHtml.includes('<details') || !descHtml.includes('<summary')) {
+      addError('description', 'Falta el FAQ al final de la descripción o no usa las etiquetas HTML <details> y <summary> para ser un acordeón funcional.');
     }
   }
-  
-  if (title.length > 65) {
-     errors.push(`El SEO Title es demasiado largo (${title.length} chars). Mantenlo idealmente bajo 60 caracteres.`);
-  }
-  if (metaDesc.length > 165) {
-     errors.push(`La Meta Description es demasiado larga (${metaDesc.length} chars). Mantenla idealmente bajo 160 caracteres.`);
-  }
 
-  if (!descHtml.includes('<h2') && !descHtml.includes('<h3')) {
-     errors.push('La descripción HTML no contiene etiquetas H2 o H3. DEBES estructurar el contenido con subtítulos creativos.');
-  }
-  
-  if (!descHtml.includes('<details') || !descHtml.includes('<summary')) {
-     errors.push('Falta el FAQ estructurado. DEBES incluirlo al final de la descripción usando etiquetas HTML <details> y <summary> funcionales con estilos en línea.');
-  }
-
-  if (!seo.secondary_keywords || !Array.isArray(seo.secondary_keywords) || seo.secondary_keywords.length === 0) {
-     errors.push('No proporcionaste keywords secundarias. DEBES sugerir keywords secundarias que aporten valor semántico.');
-  }
-  
-  return errors;
+  return result;
 }
 
 export async function POST(request: NextRequest) {
@@ -96,53 +175,47 @@ export async function POST(request: NextRequest) {
     }
 
     const tone = client.tone_of_voice || 'Profesional';
-
     const provider = getAIProvider();
     const seoProvider = seo_context?.provider || 'none';
-    const builder = product?.builder || 'gutenberg';
-    let globalInstructions = `
-REGLAS ESTRICTAS DE SEO Y CONTENIDO:
-- Producto y Contexto: NUNCA alteres el número, tipo o características del producto. Si el producto es singular (ej. "Gorro Gris"), mantén todo el contenido y SEO en singular. NO inventes cantidades, variedades, beneficios o especificaciones que no existan.
-- SEO Title: DEBE contener exactamente la keyword principal, respetando su forma singular/plural y contexto real. La keyword debe aparecer al principio del SEO Title siempre que sea natural y técnicamente posible. INCLUYE al menos una Power Word o un Número SÓLO si resulta natural para la intención de búsqueda y NO altera la naturaleza del producto (ej. NUNCA conviertas "Gorro Gris" en "Las 5 Mejores Gorras Grises"). Máximo 60 caracteres.
-- Meta Description: Atractiva, incluye beneficios reales y la keyword. Máximo 160 caracteres.
-- Contenido (HTML): EXTREMADAMENTE IMPORTANTE: Tu respuesta DEBE SUPERAR ESTRICTAMENTE LAS 800 PALABRAS. Estructura la descripción en 6 secciones con etiquetas H2/H3. NUNCA uses nombres genéricos, inventa subtítulos creativos y naturales. Mantén párrafos cortos y legibles, evitando bloques excesivamente largos.
-- FAQ (IMPORTANTE): Al final del HTML de la descripción, DEBES inyectar el FAQ renderizado como un acordeón funcional usando ETIQUETAS HTML NATIVAS (<details> y <summary>). NO uses bloques de Gutenberg ni clases de Elementor. Para asegurar que se vea profesional y coherente con cualquier web, DEBES usar ESTILOS EN LÍNEA (inline styles, ej. style="padding:10px; border:1px solid #ccc; cursor:pointer; margin-bottom:10px;") en las etiquetas <details> y <summary>. NO uses la etiqueta <style> general, ya que WordPress la eliminará. Esto lo hace 100% compatible e invisible para el usuario sin importar el maquetador activo.
-- Keywords Secundarias: Propón al menos 2 a 3 keywords secundarias semánticamente relacionadas cuando aporten valor. NUNCA dejes el array vacío.
-- Prioridad Absoluta: Exactitud del producto > Intención de búsqueda > Utilidad/Conversión > Naturalidad > SEO puro.
-- Densidad de Keyword: Mantén la densidad de la Focus Keyword por debajo del 2.5%, idealmente 1-1.5% cuando sea natural. Si es excesiva, usa sinónimos y lenguaje natural sin hacer keyword stuffing.
-- AUTO-CHECKLIST INTERNO OBLIGATORIO: Antes de generar el JSON, asegúrate de que: a) El SEO Title no altera la cantidad del producto y usa la keyword al inicio. b) Los H2 NO son textos genéricos y los párrafos son cortos. c) Generaste más de 800 palabras. d) El FAQ usa <details> y tiene estilos CSS EN LÍNEA atractivos.`;
 
-    let rankMathInstructions = '';
-    if (seoProvider === 'rank_math') {
-      rankMathInstructions = `
-IMPORTANTE PARA RANK MATH:
-- Título y Slug: Genera un "title" nuevo y poderoso. El slug debe incluir la keyword separada por guiones y NO superar 75 caracteres.`;
-    } else if (seoProvider === 'yoast') {
-      rankMathInstructions = `
-IMPORTANTE PARA YOAST SEO:
-- Optimiza también los campos para Yoast garantizando legibilidad, oraciones cortas y buen uso de voz activa. El slug debe incluir la keyword separada por guiones y NO superar 75 caracteres.`;
-    }
+    const globalInstructions = `
+REGLAS ESTRICTAS DE SEO Y CONTENIDO PARA WOOCOMMERCE:
+- Exactitud del Producto: NUNCA alteres características, cantidades o naturaleza del producto. Si es singular (ej. "Gorro Gris"), mantén TODO en singular. JAMÁS inventes cantidades (NO conviertas en "Las 5 Mejores...").
+- SEO Title: DEBE contener la Focus Keyword (preferentemente al inicio). INCLUYE al menos una Power Word y un Número SÓLO SI es 100% natural, honesto y NO manipula la esencia del producto.
+- Meta Description: Atractiva, describe realmente el producto y contiene la Focus Keyword.
+- Slug: Corto, limpio, con la Focus Keyword. No rompas URLs existentes sin razón.
+- Descripción Larga: OBJETIVO ESTRICTO >= 650 palabras reales (útiles, específicas, sin paja). Usa H2/H3 atractivos y párrafos cortos.
+- Densidad de Keyword: 1% a 1.5% (MÁXIMO 2.5%). Usa variaciones semánticas para evitar keyword stuffing.
+- Distribución Keyword: DEBE estar en la introducción y en al menos un encabezado H2/H3.
+- FAQ (OBLIGATORIO): Al final de la descripción, inyecta un FAQ como ACORDEÓN VISUAL usando HTML5 nativo (<details> y <summary>). Usa ESTILOS EN LÍNEA (ej. style="padding:15px; border:1px solid #e2e8f0; border-radius:8px; cursor:pointer; margin-bottom:10px; background:#fff;") para que sea muy atractivo en cualquier maquetador (Gutenberg/Elementor) sin depender de scripts.
+- Imágenes y Enlaces: Agrega atributos ALT a imágenes si corresponde. Usa URLs reales del contexto, NUNCA inventes URLs externas.
+- Checklist Prioridad: Exactitud > Intención de búsqueda > Conversión > Naturalidad > SEO.`;
 
-    const systemPrompt = `Eres un experto en Copywriting y SEO técnico avanzado para WooCommerce. Tono: ${tone}.
-Genera contenido optimizado para el producto basándote SÓLO en la información disponible. No inventes características, datos ni URLs que no existan.
+    const rankMathInstructions = (seoProvider === 'rank_math') 
+      ? `\nIMPORTANTE PARA RANK MATH:\n- Asegura legibilidad perfecta, density balanceado y meta-datos compatibles al 100% con Rank Math.` 
+      : (seoProvider === 'yoast')
+      ? `\nIMPORTANTE PARA YOAST SEO:\n- Asegura voz activa, longitud de oraciones cortas y meta-datos 100% compatibles con Yoast.` 
+      : '';
+
+    const systemPrompt = `Eres el Arquitecto SEO AI para WooCommerce. Tono: ${tone}.
+Genera contenido basándote SÓLO en la información del producto. NO INVENTES.
 ${globalInstructions}
 ${rankMathInstructions}
 
-Responde ÚNICAMENTE en JSON con la siguiente estructura (no envuelvas en markdown):
+Responde ÚNICAMENTE en JSON con esta estructura exacta:
 {
   "title": "Nuevo Título poderoso para el producto (H1)",
   "short_description": "Descripción corta (atractiva, ideal para conversión).",
-  "description": "Descripción HTML súper larga (>800 palabras) con 6 secciones H2 inventados y NO genéricos. Párrafos cortos. FAQ en formato <details>/<summary> con CSS incluido al final.",
+  "description": "Descripción HTML súper larga (>=650 palabras útiles) con H2/H3 y FAQ en <details> estilizado al final.",
   "slug": "slug-optimizado",
   "seo": {
     "provider": "${seoProvider}",
-    "seo_title": "Meta title SEO (DEBE COMENZAR CON LA KEYWORD SI ES POSIBLE, RESPETANDO EL CONTEXTO. MAX 60 CHARS)",
+    "seo_title": "Meta title SEO (con keyword exacta)",
     "meta_description": "Meta description",
     "focus_keyword": "keyword principal",
-    "secondary_keywords": ["OBLIGATORIO_k1", "OBLIGATORIO_k2"],
+    "secondary_keywords": ["k1", "k2"],
     "canonical": ""
-  },
-  "faq": [{"question": "Q?", "answer": "A"}]
+  }
 }`;
 
     const userPrompt = JSON.stringify({ product, seo_context }, null, 2);
@@ -153,11 +226,12 @@ Responde ÚNICAMENTE en JSON con la siguiente estructura (no envuelvas en markdo
     ];
 
     let currentAttempt = 1;
-    const MAX_ATTEMPTS = 3;
-    let finalParsed = null;
+    const MAX_ATTEMPTS = 3; // 1 Generación + 2 Reparaciones selectivas
+    let currentParsed: any = {};
+    let isFullyValid = false;
     let finalValidationErrors: string[] = [];
 
-    while (currentAttempt <= MAX_ATTEMPTS) {
+    while (currentAttempt <= MAX_ATTEMPTS && !isFullyValid) {
       const response = await provider.complete({
         model: 'gpt-4o-mini',
         messages: messages
@@ -170,45 +244,84 @@ Responde ÚNICAMENTE en JSON con la siguiente estructura (no envuelvas en markdo
       }
 
       try {
-        const parsed = JSON.parse(jsonStr);
-        const validationErrors = validateSEO(parsed, seoProvider);
+        const partialParsed = JSON.parse(jsonStr);
 
-        if (validationErrors.length === 0) {
-          finalParsed = parsed;
-          finalValidationErrors = [];
-          break; // Todo correcto, terminamos el bucle
+        // FUSIÓN (MERGE) SELECTIVA
+        if (currentAttempt === 1) {
+          currentParsed = partialParsed;
+        } else {
+          // Deep merge the repaired fields into the current state
+          if (partialParsed.seo && typeof partialParsed.seo === 'object') {
+             currentParsed.seo = { ...currentParsed.seo, ...partialParsed.seo };
+          }
+          const nonSeoKeys = Object.keys(partialParsed).filter(k => k !== 'seo');
+          for (const key of nonSeoKeys) {
+             currentParsed[key] = partialParsed[key];
+          }
         }
 
-        // Hubo errores de validación
-        finalParsed = parsed; // Guardamos el intento fallido por si es el último
-        finalValidationErrors = validationErrors;
+        // VALIDACIÓN DETERMINÍSTICA
+        const validation = validateSEO(currentParsed, seoProvider);
+
+        if (validation.isValid) {
+          isFullyValid = true;
+          finalValidationErrors = [];
+          break; // Cumplió el checklist obligatorio
+        }
+
+        // PREPARAR REPARACIÓN SELECTIVA
+        finalValidationErrors = [];
+        for (const field of validation.fieldsToRepair) {
+           finalValidationErrors.push(...validation.errorsByField[field]);
+        }
 
         if (currentAttempt < MAX_ATTEMPTS) {
-          messages.push({ role: 'assistant', content: jsonStr });
-          const errorPrompt = `VALIDACIÓN FALLIDA. Tu propuesta anterior incumplió las siguientes reglas críticas de SEO y contenido:\n- ${validationErrors.join('\n- ')}\n\nESTRICTAMENTE OBLIGATORIO: Corrige estos errores SIN romper el resto del contenido y devuelve el JSON completo re-optimizado. Recuerda NO inventar información ni alterar la naturaleza del producto.`;
-          messages.push({ role: 'user', content: errorPrompt });
-          console.warn(`[Attempt ${currentAttempt}] SEO Validation failed. Retrying... Errors: ${validationErrors.join(' | ')}`);
+          console.warn(`[Attempt ${currentAttempt}] SEO Validation failed. Triggering Selective Repair... Fields: ${validation.fieldsToRepair.join(', ')}`);
+          
+          let errorText = `Tu respuesta anterior incumplió requisitos críticos. DEBES REPARAR ÚNICAMENTE LOS SIGUIENTES CAMPOS. DEVUELVE UN JSON SÓLO CON LOS CAMPOS CORREGIDOS:\n\n`;
+          
+          for (const field of validation.fieldsToRepair) {
+             errorText += `CAMPO [${field}]:\n- ${validation.errorsByField[field].join('\n- ')}\n\n`;
+          }
+
+          errorText += `ESTRICTAMENTE OBLIGATORIO: Tu JSON de respuesta debe incluir SÓLO las claves que necesitan reparación (${validation.fieldsToRepair.join(', ')}). No regeneres los campos correctos. Conserva el mismo formato JSON base.`;
+
+          messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+            { role: 'assistant', content: JSON.stringify(currentParsed) },
+            { role: 'user', content: errorText }
+          ];
         }
       } catch (error) {
         console.error('Failed to parse AI response:', response.content);
         if (currentAttempt === MAX_ATTEMPTS) {
-          return NextResponse.json({ success: false, error: 'Invalid AI response' }, { status: 500 });
+          if (!currentParsed.title) {
+             return NextResponse.json({ success: false, error: 'Invalid AI response' }, { status: 500 });
+          }
+          break; // Fallback al mejor JSON disponible si ya había algo
         }
         messages.push({ role: 'assistant', content: response.content });
-        messages.push({ role: 'user', content: 'ERROR: Tu respuesta no es un JSON válido. Por favor devuelve ÚNICAMENTE el JSON sin formato Markdown adicional.' });
+        messages.push({ role: 'user', content: 'ERROR: Tu respuesta no es un JSON válido. Devuelve ÚNICAMENTE el JSON.' });
       }
 
       currentAttempt++;
     }
 
-    if (!finalParsed) {
-       return NextResponse.json({ success: false, error: 'Failed to generate valid content' }, { status: 500 });
+    if (!currentParsed || Object.keys(currentParsed).length === 0) {
+       return NextResponse.json({ success: false, error: 'Failed to generate content' }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, data: finalParsed, validation_errors: finalValidationErrors });
+    // Retorna el JSON validado (o reparado hasta donde fue posible)
+    return NextResponse.json({ 
+      success: true, 
+      data: currentParsed, 
+      validation_errors: finalValidationErrors.length > 0 ? finalValidationErrors : undefined 
+    });
 
   } catch (error) {
     console.error(error);
     return NextResponse.json({ success: false, error: 'Internal Server Error' }, { status: 500 });
   }
 }
+
