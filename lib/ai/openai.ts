@@ -71,13 +71,12 @@ export function createOpenAIProvider(): AIProvider {
         prompt: options.prompt,
         n: 1,
         size: '1024x1024',
-        response_format: 'b64_json',
       })
 
       const images = response.data.map(img => {
         return {
-          url: `data:image/png;base64,${img.b64_json}`,
-          base64: img.b64_json ?? ''
+          url: img.url ?? '',
+          base64: ''
         }
       })
 

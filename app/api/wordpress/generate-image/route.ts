@@ -29,13 +29,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { prompt, type, niche, model_preference } = body;
+    const { prompt, type, niche, model_preference, base64_image } = body;
 
     if (!prompt) {
       return NextResponse.json({ success: false, error: 'Prompt is required' }, { status: 400 });
     }
 
-    // Force gemini if requested or fallback to default
     const providerName = model_preference === 'gemini' ? 'gemini' : 'openai';
     const provider = getAIProvider(providerName);
 
@@ -43,10 +42,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: `El proveedor actual (${providerName}) no soporta generación de imágenes.` }, { status: 400 });
     }
 
-    const fullPrompt = `Crea una imagen de alta calidad, fotorrealista para el nicho de negocio: "${niche || 'General'}". 
+    let fullPrompt = `Crea una imagen de alta calidad, fotorrealista para el nicho de negocio: "${niche || 'General'}". 
 Tipo de imagen solicitada: "${type || 'Producto'}". 
 Descripción/Instrucciones: ${prompt}.
 No incluyas texto en la imagen. La iluminación debe ser profesional.`;
+
+    // If an existing image is provided, use vision to describe the subject and modify it
+    if (base64_image) {
+      const visionPrompt = `Analiza detalladamente el objeto principal o producto en esta imagen, ignorando el fondo.
+Recrea este objeto y aplícale los siguientes cambios/instrucciones del usuario: "${prompt}".
+Genera un prompt altamente detallado en inglés para DALL-E 3 que recree el objeto original con las modificaciones solicitadas, en el contexto de "${niche || 'General'}". Solo responde con el prompt en inglés.`;
+      
+      const visionResult = await provider.complete({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: visionPrompt },
+              { type: 'image_url', image_url: { url: base64_image } }
+            ]
+          }
+        ]
+      });
+      fullPrompt = visionResult.content.trim();
+    }
 
     const result = await provider.generateImage({
       prompt: fullPrompt,
