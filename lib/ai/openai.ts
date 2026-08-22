@@ -83,8 +83,8 @@ export function createOpenAIProvider(): AIProvider {
 
         return { images }
       } catch (error: any) {
-        // Fallback to dall-e-2 if dall-e-3 is not available (e.g., Free Tier API keys)
-        if (error?.message?.includes('does not exist') || error?.status === 404 || error?.status === 400) {
+        // Si DALL-E 3 falla (ej. cuenta gratuita sin fondos), intentamos DALL-E 2
+        try {
           const fallbackResponse = await client.images.generate({
             model: 'dall-e-2',
             prompt: options.prompt,
@@ -92,14 +92,20 @@ export function createOpenAIProvider(): AIProvider {
             size: '1024x1024',
           })
           
-          const images = fallbackResponse.data.map(img => ({
-            url: img.url ?? '',
-            base64: ''
-          }))
-          
-          return { images }
+          return {
+            images: fallbackResponse.data.map(img => ({
+              url: img.url ?? '',
+              base64: ''
+            }))
+          }
+        } catch (dalle2Error) {
+          // Si ambos fallan (ej. API limit), usamos un generador open-source gratuito de alta calidad como fallback total
+          const promptEncoded = encodeURIComponent(options.prompt)
+          const fallbackUrl = `https://image.pollinations.ai/prompt/${promptEncoded}?width=1024&height=1024&nologo=true`
+          return {
+            images: [{ url: fallbackUrl, base64: '' }]
+          }
         }
-        throw error;
       }
     }
   }
