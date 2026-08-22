@@ -66,21 +66,41 @@ export function createOpenAIProvider(): AIProvider {
     },
 
     async generateImage(options: AIGenerateImageOptions): Promise<AIGenerateImageResult> {
-      const response = await client.images.generate({
-        model: 'dall-e-3',
-        prompt: options.prompt,
-        n: 1,
-        size: '1024x1024',
-      })
+      try {
+        const response = await client.images.generate({
+          model: 'dall-e-3',
+          prompt: options.prompt,
+          n: 1,
+          size: '1024x1024',
+        })
 
-      const images = response.data.map(img => {
-        return {
-          url: img.url ?? '',
-          base64: ''
+        const images = response.data.map(img => {
+          return {
+            url: img.url ?? '',
+            base64: ''
+          }
+        })
+
+        return { images }
+      } catch (error: any) {
+        // Fallback to dall-e-2 if dall-e-3 is not available (e.g., Free Tier API keys)
+        if (error?.message?.includes('does not exist') || error?.status === 404 || error?.status === 400) {
+          const fallbackResponse = await client.images.generate({
+            model: 'dall-e-2',
+            prompt: options.prompt,
+            n: 1,
+            size: '1024x1024',
+          })
+          
+          const images = fallbackResponse.data.map(img => ({
+            url: img.url ?? '',
+            base64: ''
+          }))
+          
+          return { images }
         }
-      })
-
-      return { images }
+        throw error;
+      }
     }
   }
 }
