@@ -7,34 +7,40 @@
 
 import type { AIProvider, AIProviderName } from '@/types/ai'
 import { createOpenAIProvider } from './openai'
+import { createGeminiProvider } from './gemini'
 
-let _provider: AIProvider | null = null
+let _openaiProvider: AIProvider | null = null
+let _geminiProvider: AIProvider | null = null
 
 /**
  * Obtiene el proveedor de IA configurado.
- * Singleton — se crea una sola vez por proceso.
+ * Singleton — se crea una sola vez por proceso para cada proveedor.
  */
-export function getAIProvider(): AIProvider {
-  if (_provider) return _provider
+export function getAIProvider(providerName?: AIProviderName): AIProvider {
+  const name = providerName ?? ((process.env.AI_PROVIDER ?? 'openai') as AIProviderName)
 
-  const providerName = (process.env.AI_PROVIDER ?? 'openai') as AIProviderName
-
-  switch (providerName) {
+  switch (name) {
     case 'openai':
-      _provider = createOpenAIProvider()
-      break
+      if (!_openaiProvider) _openaiProvider = createOpenAIProvider()
+      return _openaiProvider
+    case 'gemini':
+      if (!_geminiProvider) _geminiProvider = createGeminiProvider()
+      return _geminiProvider
     default:
-      throw new Error(`Proveedor de IA no soportado: ${providerName}. Usa "openai".`)
+      throw new Error(`Proveedor de IA no soportado: ${name}. Usa "openai" o "gemini".`)
   }
-
-  return _provider
 }
 
-// Permite reemplazar el proveedor en tests
+// Permite reemplazar el proveedor en tests (usualmente openai)
 export function setAIProvider(provider: AIProvider): void {
-  _provider = provider
+  if (provider.name === 'gemini') {
+    _geminiProvider = provider
+  } else {
+    _openaiProvider = provider
+  }
 }
 
 export function resetAIProvider(): void {
-  _provider = null
+  _openaiProvider = null
+  _geminiProvider = null
 }

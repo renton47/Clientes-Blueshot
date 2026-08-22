@@ -24,55 +24,31 @@ export async function POST(request: NextRequest) {
     }
 
     const client = Array.isArray(installation.clients) ? installation.clients[0] : installation.clients;
-
     if (!client?.active) {
       return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
     }
 
     const body = await request.json();
-    const { product } = body;
-    if (!product) {
-      return NextResponse.json({ success: false, error: 'Product data required' }, { status: 400 });
-    }
+    const { site_name, site_description, content_sample, model_preference } = body;
 
-    const provider = getAIProvider();
-    const systemPrompt = `Eres un experto en SEO y WooCommerce. Analiza el siguiente producto.
-Responde ÚNICAMENTE en JSON con la siguiente estructura:
-{
-  "seo_score": 85,
-  "content_score": 70,
-  "conversion_score": 90,
-  "issues": [
-    "El título es muy corto",
-    "Falta descripción larga"
-  ],
-  "successes": [
-    "Precio bien estructurado"
-  ]
-}`;
+    const providerName = model_preference === 'gemini' ? 'gemini' : 'openai';
+    const provider = getAIProvider(providerName);
 
-    const userPrompt = JSON.stringify(product, null, 2);
+    const systemPrompt = `Eres un experto en clasificación de negocios. Dado el nombre, descripción y un extracto de contenido de un sitio web, determina el "Nicho" principal de este negocio de forma concisa.
+Responde ÚNICAMENTE con 1 o 2 palabras (ejemplo: "Tecnología", "Ropa Mujer", "Clínica Dental", "Mascotas"). No incluyas signos de puntuación ni explicaciones adicionales.`;
+
+    const userPrompt = `Nombre: ${site_name ?? ''}
+Descripción: ${site_description ?? ''}
+Muestra de Contenido: ${content_sample ?? ''}`;
 
     const response = await provider.complete({
-      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ]
     });
 
-    try {
-      let jsonStr = response.content;
-      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
-      }
-      const parsed = JSON.parse(jsonStr);
-      return NextResponse.json({ success: true, data: parsed });
-    } catch (error) {
-      console.error('Failed to parse AI response:', response.content);
-      return NextResponse.json({ success: false, error: 'Invalid AI response' }, { status: 500 });
-    }
+    return NextResponse.json({ success: true, data: response.content.trim() });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ success: false, error: 'Internal Server Error' }, { status: 500 });

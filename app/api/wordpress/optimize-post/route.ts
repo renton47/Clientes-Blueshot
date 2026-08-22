@@ -24,37 +24,34 @@ export async function POST(request: NextRequest) {
     }
 
     const client = Array.isArray(installation.clients) ? installation.clients[0] : installation.clients;
-
     if (!client?.active) {
       return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
     }
 
     const body = await request.json();
-    const { product } = body;
-    if (!product) {
-      return NextResponse.json({ success: false, error: 'Product data required' }, { status: 400 });
+    const { post, seo_context, model_preference } = body;
+    if (!post) {
+      return NextResponse.json({ success: false, error: 'Post data required' }, { status: 400 });
     }
 
-    const provider = getAIProvider();
-    const systemPrompt = `Eres un experto en SEO y WooCommerce. Analiza el siguiente producto.
-Responde ÚNICAMENTE en JSON con la siguiente estructura:
-{
-  "seo_score": 85,
-  "content_score": 70,
-  "conversion_score": 90,
-  "issues": [
-    "El título es muy corto",
-    "Falta descripción larga"
-  ],
-  "successes": [
-    "Precio bien estructurado"
-  ]
-}`;
+    const providerName = model_preference === 'gemini' ? 'gemini' : 'openai';
+    const provider = getAIProvider(providerName);
 
-    const userPrompt = JSON.stringify(product, null, 2);
+    const systemPrompt = `Eres un experto en SEO especializado en WordPress. Analiza el siguiente contenido de una página/entrada.
+Responde ÚNICAMENTE en JSON con la siguiente estructura y nada más:
+{
+  "seo_title": "Título SEO Optimizado (Max 60 chars)",
+  "meta_description": "Meta descripción optimizada (Max 160 chars)",
+  "focus_keyword": "Palabra clave principal"
+}
+Si se te provee el contexto SEO actual (seo_context), intenta mejorarlo en lugar de ignorarlo.`;
+
+    const userPrompt = `Datos del Post:
+${JSON.stringify(post, null, 2)}
+Contexto SEO Actual:
+${seo_context ? JSON.stringify(seo_context, null, 2) : 'Ninguno'}`;
 
     const response = await provider.complete({
-      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }

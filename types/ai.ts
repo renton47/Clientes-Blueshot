@@ -32,10 +32,25 @@ export interface AICompletionResult {
   }
 }
 
+export interface AIGenerateImageOptions {
+  prompt: string
+  aspectRatio?: '1:1' | '16:9' | '9:16' | '3:4' | '4:3'
+  format?: 'png' | 'jpeg'
+  number_of_images?: number
+}
+
+export interface AIGenerateImageResult {
+  images: {
+    url: string
+    base64?: string
+  }[]
+}
+
 export interface AIProvider {
   name: AIProviderName
   complete(options: AICompletionOptions): Promise<AICompletionResult>
   stream(options: AICompletionOptions): AsyncGenerator<string, void, unknown>
+  generateImage?(options: AIGenerateImageOptions): Promise<AIGenerateImageResult>
 }
 
 // -----------------------------------------------------------------------------

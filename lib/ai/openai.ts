@@ -6,7 +6,7 @@
 // =============================================================================
 
 import OpenAI from 'openai'
-import type { AIProvider, AICompletionOptions, AICompletionResult } from '@/types/ai'
+import type { AIProvider, AICompletionOptions, AICompletionResult, AIGenerateImageOptions, AIGenerateImageResult } from '@/types/ai'
 
 function createOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY
@@ -22,7 +22,7 @@ function createOpenAIClient(): OpenAI {
 
 export function createOpenAIProvider(): AIProvider {
   const client = createOpenAIClient()
-  const defaultModel = process.env.OPENAI_MODEL ?? 'gpt-5.2'
+  const defaultModel = process.env.OPENAI_MODEL ?? 'gpt-4o'
 
   return {
     name: 'openai',
@@ -64,5 +64,24 @@ export function createOpenAIProvider(): AIProvider {
         if (delta) yield delta
       }
     },
+
+    async generateImage(options: AIGenerateImageOptions): Promise<AIGenerateImageResult> {
+      const response = await client.images.generate({
+        model: 'dall-e-3',
+        prompt: options.prompt,
+        n: 1,
+        size: '1024x1024',
+        response_format: 'b64_json',
+      })
+
+      const images = response.data.map(img => {
+        return {
+          url: `data:image/png;base64,${img.b64_json}`,
+          base64: img.b64_json ?? ''
+        }
+      })
+
+      return { images }
+    }
   }
 }
